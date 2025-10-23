@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>立春(節気)基準 本命(生まれ干支) 判定ツール｜Lite</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", Arial, sans-serif; line-height:1.6; padding:24px; }
+  .card { max-width: 720px; margin: 0 auto 16px; padding: 16px 20px; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  h2 { font-size: 16px; margin: 8px 0; }
+  label { font-weight: 600; display:block; margin: 8px 0 6px; }
+  input[type="date"], input[type="time"] { width: 100%; max-width: 260px; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; }
+  button { padding: 10px 14px; border: none; border-radius: 8px; cursor: pointer; background:#2563eb; color:#fff; font-weight:600; }
+  button.secondary { background:#6b7280; }
+  .note { color:#6b7280; font-size: 0.9em; }
+  .ok   { background:#ecfdf5; border:1px solid #a7f3d0; padding:10px 12px; border-radius:8px; margin-top:10px; }
+  .alert{ background:#fff7ed; border:1px solid #fed7aa; padding:10px 12px; border-radius:8px; margin-top:10px; }
+  .muted{ color:#6b7280; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>立春(節気)基準の 本命(生まれ干支) 判定ツール <span class="muted">Lite（ブラウザだけで動作）</span></h1>
+    <p class="note">※二十四節気のひとつ<b>立春（太陽黄経315°）</b>で年が切り替わる基準です。<br>
+      <b>1月1日〜立春前</b>は<b>前年の干支</b>、<b>立春当日</b>は「立春の時刻より前＝前年／後＝当年」となります。</p>
+  </div>
+
+  <div class="card">
+    <h2>単発判定</h2>
+    <label for="birth">生年月日</label>
+    <input id="birth" type="date" />
+    <label for="time">（任意）出生時刻</label>
+    <input id="time" type="time" step="60" />
+    <div style="margin-top:10px;">
+      <button id="go">判定する</button>
+      <button id="clr" class="secondary">クリア</button>
+    </div>
+    <div id="res"></div>
+    <p class="note" style="margin-top:10px;">※うまく動かない場合は、いったん「保存」してからブラウザ（Chrome/Edge/Safari）で開いてください。</p>
+  </div>
+
+<script>
+// ーー 数学関数など
+function toJulianDay(dtUTC) {
+  const ymdh = dtUTC; // {y,m,d,h,min}
+  let y = ymdh.y, m = ymdh.m, d = ymdh.d + (ymdh.h + (ymdh.min)/60)/24;
+  if (m <= 2) { y -= 1; m += 12; }
+  const A = Math.floor(y/100);
+  const B = 2 - A + Math.floor(A/4);
+  const JD = Math.floor(365.25*(y + 4716)) + Math.floor(30.6001*(m + 1)) + d + B - 1524.5;
+  return JD;
+}
+function sunAppLongDeg(dtUTC) {
+  const JD = toJulianDay(dtUTC);
+  const T = (JD - 2451545.0)/36525.0;
+  const L0 = (280.46646 + 36000.76983*T + 0.0003032*T*T) % 360;
+  const M  = (357.52911 + 35999.05029*T - 0.0001537*T*T + Math.pow(T,3)/24490000.0) % 360;
+  const rad = Math.PI/180;
+  const C = (1.914602 - 0.004817*T - 0.000014*T*T) * Math.sin(M*rad)
+          + (0.019993 - 0.000101*T) * Math.sin(2*M*rad)
+          + 0.000289 * Math.sin(3*M*rad);
+  const trueLong = L0 + C;
+  const Omega = 125.04 - 1934.136 * T;
+  const lambda_app = trueLong - 0.00569 - 0.00478 * Math.sin(Omega*rad);
+  return (lambda_app % 360 + 360) % 360;
+}
+function findLichunJST(year) {
+  // 探索：JST 2/3 00:00〜2/6 00:00 → UTCに直してから計算
+  let a = {y:year, m:2, d:2, h:15, min:0}; // UTC=JST-9h（2/3 00:00 JST）
+  let b = {y:year, m:2, d:5, h:15, min:0}; // UTC=JST-9h（2/6 00:00 JST）
+  const target = 315.0;
+  for (let i=0;i<60;i++){
+    const m = midUTC(a,b);
+    const va = norm180(sunAppLongDeg(a) - target);
+    const vm = norm180(sunAppLongDeg(m) - target);
+    if (Math.abs(vm) < Math.abs(va)) a = m; else b = m;
+    if (spanSec(a,b) < 5) break;
+  }
+  const mid = midUTC(a,b);
+  // JSTに+9h
+  const j = addUTC(mid, 9*60);
+  return new Date(j.y, j.m-1, j.d, j.h, j.min, 0); // ローカル表示（JST前提）
+}
+function midUTC(a,b){
+  // a,b の中間（UTC）を返す
+  const da = Date.UTC(a.y,a.m-1,a.d,a.h,a.min);
+  const db = Date.UTC(b.y,b.m-1,b.d,b.h,b.min);
+  const dm = new Date((da+db)/2);
+  return {y:dm.getUTCFullYear(), m:dm.getUTCMonth()+1, d:dm.getUTCDate(), h:dm.getUTCHours(), min:dm.getUTCMinutes()};
+}
+function addUTC(a, mins){
+  const d0 = Date.UTC(a.y,a.m-1,a.d,a.h,a.min);
+  const d1 = new Date(d0 + mins*60*1000);
+  return {y:d1.getUTCFullYear(), m:d1.getUTCMonth()+1, d:d1.getUTCDate(), h:d1.getUTCHours(), min:d1.getUTCMinutes()};
+}
+function spanSec(a,b){
+  const da = Date.UTC(a.y,a.m-1,a.d,a.h,a.min);
+  const db = Date.UTC(b.y,b.m-1,b.d,b.h,b.min);
+  return Math.abs(db-da)/1000;
+}
+function norm180(x){
+  let v = ((x+540)%360)-180;
+  if (v<-180) v+=360;
+  return v;
+}
+
+const stems = ["甲","乙","丙","丁","戊","己","庚","辛","壬","癸"];
+const branches = ["子","丑","寅","卯","辰","巳","午","未","申","酉","戌","亥"];
+const animals = {"子":"ねずみ","丑":"うし","寅":"とら","卯":"うさぎ","辰":"たつ","巳":"へび","午":"うま","未":"ひつじ","申":"さる","酉":"とり","戌":"いぬ","亥":"いのしし"};
+
+function sexagenary(idx){
+  const stem = stems[idx % 10];
+  const br   = branches[idx % 12];
+  return {eto: stem+br, branch: br, animal: animals[br]};
+}
+function etoOfYear(y){
+  let idx = (y - 1984) % 60;
+  if (idx < 0) idx += 60;
+  return sexagenary(idx);
+}
+
+function fmt(dt){
+  const z = n=> String(n).padStart(2,"0");
+  return dt.getFullYear()+"-"+z(dt.getMonth()+1)+"-"+z(dt.getDate())+" "+z(dt.getHours())+":"+z(dt.getMinutes());
+}
+
+function judge(dateStr, timeStr){
+  if (!dateStr) return {error:"日付を入力してください。"};
+  const [Y,M,D] = dateStr.split("-").map(s=>parseInt(s,10));
+  let birth = new Date(Y, M-1, D, 0, 0, 0);
+  if (timeStr){
+    const [h,mi] = timeStr.split(":").map(s=>parseInt(s,10));
+    if (!isNaN(h)) birth.setHours(h);
+    if (!isNaN(mi)) birth.setMinutes(mi);
+  }
+  const lichun = findLichunJST(Y);
+  const sameDay = birth.getFullYear()===lichun.getFullYear() && birth.getMonth()===lichun.getMonth() && birth.getDate()===lichun.getDate();
+
+  if (!sameDay && birth < lichun){
+    const y = Y-1; const e = etoOfYear(y);
+    return {year:y, eto:e.eto, branch:e.branch, animal:e.animal, note:"立春前（前年の干支）", lichun:lichun};
+  } else if (!sameDay && birth > lichun){
+    const y = Y; const e = etoOfYear(y);
+    return {year:y, eto:e.eto, branch:e.branch, animal:e.animal, note:"立春以後（当年の干支）", lichun:lichun};
+  } else {
+    if (timeStr){
+      if (birth < lichun){
+        const y = Y-1; const e = etoOfYear(y);
+        return {year:y, eto:e.eto, branch:e.branch, animal:e.animal, note:"立春当日：立春時刻より前（前年の干支）", lichun:lichun};
+      } else {
+        const y = Y; const e = etoOfYear(y);
+        return {year:y, eto:e.eto, branch:e.branch, animal:e.animal, note:"立春当日：立春時刻より後（当年の干支）", lichun:lichun};
+      }
+    } else {
+      const eB = etoOfYear(Y-1), eA = etoOfYear(Y);
+      return {year:(Y-1)+" or "+Y, eto:eB.eto+"（前） / "+eA.eto+"（後）", branch:eB.branch+" / "+eA.branch, animal:eB.animal+" / "+eA.animal, note:"立春当日（時刻で前年/当年に分岐）", lichun:lichun};
+    }
+  }
+}
+
+function render(res){
+  const el = document.getElementById("res");
+  if (res.error){
+    el.innerHTML = '<div class="alert">'+res.error+'</div>';
+    return;
+  }
+  el.innerHTML = '<div class="ok">'
+    + '<div><b>判定年（立春基準）</b>：'+res.year+'</div>'
+    + '<div><b>干支</b>：'+res.eto+'　<b>十二支</b>：'+res.branch+'　<b>動物</b>：'+res.animal+'</div>'
+    + '<div class="note">その年の立春（JST）：'+fmt(res.lichun)+' ／ '+res.note+'</div>'
+    + '</div>';
+}
+
+document.getElementById("go").onclick = function(){
+  const d = document.getElementById("birth").value;
+  const t = document.getElementById("time").value;
+  const res = judge(d,t);
+  render(res);
+};
+document.getElementById("clr").onclick = function(){
+  document.getElementById("birth").value = "";
+  document.getElementById("time").value = "";
+  document.getElementById("res").innerHTML = "";
+};
+</script>
+</body>
+</html>
